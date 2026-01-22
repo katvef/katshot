@@ -2,7 +2,8 @@ Basic Hyprland screenshot utility.
 
 Support for annotations and window selection
 
-```Usage: katshot \[opts\]
+```
+Usage: katshot [opts]
 	-h                   Print this message
 	-f <filename>        Name of the outputted file
 	-d <directory>       Path to the directory screenshots are stored in (created if it doesn't exist)
