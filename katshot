@@ -15,7 +15,7 @@ usage() {
 	printf %s "Usage: $0 [opts]
 	-h                   Print this message
 	-f <filename>        Name of the outputted file
-	-d <directory>       Path to the directory screenshots are stored in (created if doesn't exist)
+	-d <directory>       Path to the directory screenshots are stored in (created if it doesn't exist)
 	-o                   Save the screenshot only onto clipboard (incompatible with -n)
 	-n                   Don't copy screenshot to clipboard (incompatible with -o)
 	-c <yes/no/only>     Specify clipboard mode (
