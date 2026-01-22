@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+
+set -e
+
+TEMPFILE=
+FILENAME="screenshot_$(date +%Y-%m-%d_%H:%M:%S).png"
+DIRECTORY="$HOME/Pictures/Screenshots"
+MODE="area"
+CLIPBOARD=
+ANNOTATE=false
+FREEZE=
+FREEZE_PID=
+
+usage() {
+	printf %s "Usage: $0 [opts]
+	-h                   Print this message
+	-f <filename>        Name of the outputted file
+	-d <directory>       Path to the directory screenshots are stored in (created if doesn't exist)
+	-o                   Save the screenshot only onto clipboard (incompatible with -n)
+	-n                   Don't copy screenshot to clipboard (incompatible with -o)
+	-c <yes/no/only>     Specify clipboard mode (
+	-a <satty/swappy>    Open screenshot in annotation app, satty is used if neither is specified
+	-z                   Freeze display during screenshot
+"
+}
+
+fail() {
+	printf %s\\n "$2"
+	usage
+	exit "$1"
+}
+
+cleanup() {
+	rm -f "$TEMPFILE" "$TEMPFILE.png"
+	kill "$FREEZE_PID" 1>/dev/null 2>&1 || true
+}
+trap cleanup 0
+
+save_screenshot() {
+	mkdir "$DIRECTORY" -p
+	if [[ $(stat "$TEMPFILE.png" 2>/dev/null) ]]; then
+		cp "$TEMPFILE.png" "$DIRECTORY/$FILENAME"
+	else
+		cp "$TEMPFILE" "$DIRECTORY/$FILENAME"
+	fi
+}
+
+clipboard_screenshot() {
+	if [[ $(stat "$TEMPFILE.png" 2>/dev/null) ]]; then
+		wl-copy -t image/png <"$TEMPFILE.png"
+	else
+		wl-copy -t image/png <"$TEMPFILE"
+	fi
+}
+
+capture() {
+	[[ $? -ne 0 ]] && exit 0
+	kill "$FREEZE_PID" 1>/dev/null 2>&1 || true
+	grim -g "$1" "$TEMPFILE"
+
+	case "$ANNOTATE" in
+	satty)
+		satty -f "$TEMPFILE" -o "$TEMPFILE.png" --early-exit
+		;;
+	swappy)
+		swappy -f "$TEMPFILE" -o "$TEMPFILE.png"
+		;;
+	esac
+
+	case "${CLIPBOARD[1]}" in
+	n)
+		save_screenshot
+		;;
+	o)
+		clipboard_screenshot
+		;;
+	*)
+		clipboard_screenshot
+		save_screenshot
+		;;
+	esac
+}
+
+grab_init() {
+	TEMPFILE="$(mktemp)"
+	if [[ $FREEZE != "" ]]; then
+		if [[ $(command -v wayfreeze) ]]; then
+			wayfreeze &
+			sleep 0.1
+			FREEZE_PID=$!
+		elif [[ $(command -v hyprpicker) ]]; then
+			hyprpicker -r -z >/dev/null &
+			sleep 0.1
+			FREEZE_PID=$!
+		else
+			printf %s\\n "Wayfreeze or hyprpicker not found, can't freeze"
+		fi
+	fi
+}
+
+grab_area() {
+	capture "$(slurp)"
+}
+
+grab_window() {
+	local workspaces windows
+	workspaces="$(hyprctl monitors -j | jq 'map(if .specialWorkspace.id != 0 then .specialWorkspace.id else .activeWorkspace.id end) | join(",")' -r)"
+	windows="$(hyprctl clients -j | jq '.[] | select(.workspace.id | contains('"$workspaces"')) | [(.at | join(",")), " ", (.size | join("x"))] | add' -r)"
+	capture "$(slurp -r <<<"$windows")"
+}
+
+grab_output() {
+	capture "$(slurp -o)"
+}
+
+while getopts ':f:m:d:conaz' arg; do
+	case "$arg" in
+	f)
+		FILENAME="$OPTARG"
+		;;
+	m)
+		MODE="$OPTARG"
+		;;
+	d)
+		DIRECTORY="$OPTARG"
+		;;
+	c)
+		case "$OPTARG" in
+		yes | no | only)
+			CLIPBOARD="$OPTARG"
+			;;
+		*)
+			fail 3 "$OPTARG Is not a valid clipboard mode"
+			;;
+		esac
+		;;
+	o)
+		CLIPBOARD=${CLIPBOARD:-"o"}
+		;;
+	n)
+		CLIPBOARD=${CLIPBOARD:-"n"}
+		;;
+	a)
+		case "${OPTARG,,}" in
+		satty)
+			ANNOTATE="satty"
+			;;
+		swappy)
+			ANNOTATE="swappy"
+			;;
+		*)
+			if [[ $OPTARG == -* ]] || [[ -z $OPTARG ]]; then
+				ANNOTATE="satty"
+			else
+				fail 4 "Only satty and swappy are supported as annotation apps at the moment"
+			fi
+			;;
+		esac
+		;;
+	z)
+		FREEZE=true
+		;;
+	\?)
+		fail 1 "Invalid argument -$arg"
+		;;
+	:)
+		fail 2 "No argument provided for -$OPTARG"
+		;;
+	esac
+done
+
+grab_init
+case "${MODE,,}" in
+area)
+	grab_area
+	;;
+window)
+	grab_window
+	;;
+output)
+	grab_output
+	;;
+esac
