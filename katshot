@@ -80,7 +80,7 @@ capture() {
 
 	case "$ANNOTATE" in
 	satty)
-		satty -f "$TEMPFILE" -o "$TEMPFILE.png" --early-exit
+		satty -f "$TEMPFILE" -o "$TEMPFILE.png" --early-exit --disable-notifications
 		;;
 	swappy)
 		swappy -f "$TEMPFILE" -o "$TEMPFILE.png"
