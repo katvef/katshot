@@ -14,11 +14,12 @@ FREEZE_PID=
 usage() {
 	printf %s "Usage: $0 [opts]
 	-h                   Print this message
+	-m <mode>            The mode to use for screenshot area selection (area, window, output, layer, surface)
 	-f <filename>        Name of the outputted file
 	-d <directory>       Path to the directory screenshots are stored in (created if it doesn't exist)
 	-o                   Save the screenshot only onto clipboard (incompatible with -n)
 	-n                   Don't copy screenshot to clipboard (incompatible with -o)
-	-c <yes/no/only>     Specify clipboard mode (
+	-c <mode>            Specify clipboard mode (yes, no, only)
 	-a <satty/swappy>    Open screenshot in annotation app, satty is used if neither is specified
 	-z                   Freeze display during screenshot
 "
@@ -32,7 +33,8 @@ fail() {
 
 handle_notification_action() {
 	if [[ $1 == "default" ]]; then
-		xdg-open "$DIRECTORY" & disown
+		xdg-open "$DIRECTORY" &
+		disown
 	fi
 }
 
@@ -130,6 +132,20 @@ grab_window() {
 	capture "$(slurp -r <<<"$windows")"
 }
 
+grab_layer() {
+	local layers
+	layers="$(hyprctl layers -j | jq 'map(.levels).[] | add | .[] | "\(.x),\(.y) \(.w)x\(.h)"' -r)"
+	capture "$(slurp -r <<<"$layers")"
+}
+
+grab_surface() {
+	local workspaces windows layers
+	workspaces="$(hyprctl monitors -j | jq 'map(if .specialWorkspace.id != 0 then .specialWorkspace.id else .activeWorkspace.id end) | join(",")' -r)"
+	windows="$(hyprctl clients -j | jq '.[] | select(.workspace.id | contains('"$workspaces"')) | [(.at | join(",")), " ", (.size | join("x"))] | add' -r)"
+	layers="$(hyprctl layers -j | jq 'map(.levels).[] | add | .[] | "\(.x),\(.y) \(.w)x\(.h)"' -r)"
+	capture "$(slurp -r <<<"$windows"$'\n'"$layers")"
+}
+
 grab_output() {
 	capture "$(slurp -o)"
 }
@@ -200,5 +216,14 @@ window)
 	;;
 output)
 	grab_output
+	;;
+layer)
+	grab_layer
+	;;
+surface)
+	grab_surface
+	;;
+*)
+	fail 5 "Invalid mode \"$MODE\""
 	;;
 esac
