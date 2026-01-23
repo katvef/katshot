@@ -30,6 +30,26 @@ fail() {
 	exit "$1"
 }
 
+handle_notification_action() {
+	if [[ $1 == "default" ]]; then
+		xdg-open "$DIRECTORY" & disown
+	fi
+}
+
+notify() {
+	case "${CLIPBOARD[1]}" in
+	n)
+		handle_notification_action "$(notify-send -u low -a Katshot -A 'default=Open Directory' 'Screenshot saved' "$DIRECTORY/$FILENAME")"
+		;;
+	o)
+		handle_notification_action "$(notify-send -u low -a Katshot 'Screenshot copied')"
+		;;
+	*)
+		handle_notification_action "$(notify-send -u low -a Katshot -A 'default=Open Directory' 'Screenshot saved & copied' "$DIRECTORY/$FILENAME")"
+		;;
+	esac
+}
+
 cleanup() {
 	rm -f "$TEMPFILE" "$TEMPFILE.png"
 	kill "$FREEZE_PID" 1>/dev/null 2>&1 || true
@@ -79,6 +99,7 @@ capture() {
 		save_screenshot
 		;;
 	esac
+	notify
 }
 
 grab_init() {
@@ -122,7 +143,7 @@ while getopts ':f:m:d:conaz' arg; do
 		MODE="$OPTARG"
 		;;
 	d)
-		DIRECTORY="$OPTARG"
+		DIRECTORY="${OPTARG%/}"
 		;;
 	c)
 		case "$OPTARG" in

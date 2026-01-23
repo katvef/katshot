@@ -2,6 +2,8 @@ Basic Hyprland screenshot utility.
 
 Support for annotations and window selection
 
+I made this because I wanted to practice my bash skills and because hyprshot doesn't support annotations
+
 ```
 Usage: katshot [opts]
 	-h                   Print this message
