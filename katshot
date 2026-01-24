@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
 
-set -e
+set -Eeo pipefail
+set +m
+shopt -s lastpipe
 
 TEMPFILE=
 FILENAME="screenshot_$(date +%Y-%m-%d_%H:%M:%S).png"
 DIRECTORY="$HOME/Pictures/Screenshots"
-MODE="area"
-CLIPBOARD=
+MODES=()
+CLIPBOARD=y
 ANNOTATE=false
-FREEZE=
+FREEZE=false
 FREEZE_PID=
+REGION=false
+RECTANGLES=
 
 usage() {
 	printf %s "Usage: $0 [opts]
 	-h                   Print this message
-	-m <mode>            The mode to use for screenshot area selection (area, window, output, layer, surface)
+	-m <mode>            The mode to use for screenshot area selection, multiple can be used (region, window, output, layer)
 	-f <filename>        Name of the outputted file
 	-d <directory>       Path to the directory screenshots are stored in (created if it doesn't exist)
 	-o                   Save the screenshot only onto clipboard (incompatible with -n)
@@ -22,6 +26,7 @@ usage() {
 	-c <mode>            Specify clipboard mode (yes, no, only)
 	-a <satty/swappy>    Open screenshot in annotation app, satty is used if neither is specified
 	-z                   Freeze display during screenshot
+
 "
 }
 
@@ -29,6 +34,26 @@ fail() {
 	printf %s\\n "$2"
 	usage
 	exit "$1"
+}
+
+apply_transform() {
+	local t x y w h w2 h2
+	while read -r t x y w h; do
+		case "$t" in
+		0 | 2)
+			w2="$w"
+			h2="$h"
+			;;
+		1 | 3)
+			w2="$h"
+			h2="$w"
+			;;
+		*)
+			fail 6 "Invalid transform: $t"
+			;;
+		esac
+		printf %s\\n "$x,$y ${w2}x${h2}"
+	done
 }
 
 handle_notification_action() {
@@ -39,7 +64,7 @@ handle_notification_action() {
 }
 
 notify() {
-	case "${CLIPBOARD[1]}" in
+	case "${CLIPBOARD[0]}" in
 	n)
 		handle_notification_action "$(notify-send -u low -a Katshot -A 'default=Open Directory' 'Screenshot saved' "$DIRECTORY/$FILENAME")"
 		;;
@@ -75,38 +100,9 @@ clipboard_screenshot() {
 	fi
 }
 
-capture() {
-	[[ $? -ne 0 ]] && exit 0
-	kill "$FREEZE_PID" 1>/dev/null 2>&1 || true
-	grim -g "$1" "$TEMPFILE"
-
-	case "$ANNOTATE" in
-	satty)
-		satty -f "$TEMPFILE" -o "$TEMPFILE.png" --early-exit --disable-notifications
-		;;
-	swappy)
-		swappy -f "$TEMPFILE" -o "$TEMPFILE.png"
-		;;
-	esac
-
-	case "${CLIPBOARD[1]}" in
-	n)
-		save_screenshot
-		;;
-	o)
-		clipboard_screenshot
-		;;
-	*)
-		clipboard_screenshot
-		save_screenshot
-		;;
-	esac
-	notify
-}
-
 grab_init() {
 	TEMPFILE="$(mktemp)"
-	if [[ $FREEZE != "" ]]; then
+	if $FREEZE; then
 		if [[ $(command -v wayfreeze) ]]; then
 			wayfreeze &
 			sleep 0.1
@@ -121,45 +117,87 @@ grab_init() {
 	fi
 }
 
-grab_area() {
-	capture "$(slurp)"
+get_rectangles() {
+	local rects=
+	((${#MODES[@]} > 0)) || MODES+=("region")
+	for MODE in "${MODES[@]}"; do
+		case "$MODE" in
+		region)
+			REGION=true
+			;;
+		window)
+			rects+="$(get_windows)"$'\n'
+			;;
+		output)
+			rects+="$(get_outputs)"$'\n'
+			;;
+		layer)
+			rects+="$(get_layers)"$'\n'
+			;;
+		esac
+	done
+	printf -v RECTANGLES %s "$rects"
 }
 
-grab_window() {
-	local workspaces windows
+get_windows() {
+	local workspaces
 	workspaces="$(hyprctl monitors -j | jq 'map(if .specialWorkspace.id != 0 then .specialWorkspace.id else .activeWorkspace.id end) | join(",")' -r)"
-	windows="$(hyprctl clients -j | jq '.[] | select(.workspace.id | contains('"$workspaces"')) | [(.at | join(",")), " ", (.size | join("x"))] | add' -r)"
-	capture "$(slurp -r <<<"$windows")"
+	hyprctl clients -j | jq '.[] | select(.workspace.id | contains('"$workspaces"')) | [(.at | join(",")), " ", (.size | join("x"))] | add' -r
 }
 
-grab_layer() {
-	local layers
-	layers="$(hyprctl layers -j | jq 'map(.levels).[] | add | .[] | "\(.x),\(.y) \(.w)x\(.h)"' -r)"
-	capture "$(slurp -r <<<"$layers")"
+get_layers() {
+	hyprctl layers -j | jq 'map(.levels).[] | add | .[] | "\(.x),\(.y) \(.w)x\(.h)"' -r
 }
 
-grab_surface() {
-	local workspaces windows layers
-	workspaces="$(hyprctl monitors -j | jq 'map(if .specialWorkspace.id != 0 then .specialWorkspace.id else .activeWorkspace.id end) | join(",")' -r)"
-	windows="$(hyprctl clients -j | jq '.[] | select(.workspace.id | contains('"$workspaces"')) | [(.at | join(",")), " ", (.size | join("x"))] | add' -r)"
-	layers="$(hyprctl layers -j | jq 'map(.levels).[] | add | .[] | "\(.x),\(.y) \(.w)x\(.h)"' -r)"
-	capture "$(slurp -r <<<"$windows"$'\n'"$layers")"
+get_outputs() {
+	hyprctl monitors -j | jq '.[] | "\(.transform) \(.x) \(.y) \(.width) \(.height)"' -r | apply_transform
 }
 
-grab_output() {
-	capture "$(slurp -o)"
+capture() {
+	local args geometry
+	if $REGION; then args=; else args=-r; fi
+	geometry="$(printf %s "$RECTANGLES" | slurp "$args")"
+	[[ $? -ne 0 ]] && exit 0
+	kill "$FREEZE_PID" 1>/dev/null 2>&1 || true
+
+	grim -g "$geometry" "$TEMPFILE"
+
+	case "$ANNOTATE" in
+	satty)
+		satty -f "$TEMPFILE" -o "$TEMPFILE.png" --early-exit --disable-notifications
+		;;
+	swappy)
+		swappy -f "$TEMPFILE" -o "$TEMPFILE.png"
+		;;
+	esac
+
+	case "${CLIPBOARD[0]}" in
+	n)
+		save_screenshot
+		;;
+	o)
+		clipboard_screenshot
+		;;
+	y)
+		clipboard_screenshot
+		save_screenshot
+		;;
+	esac
+	notify &
+	disown
 }
 
 while getopts ':f:m:d:conaz' arg; do
 	case "$arg" in
-	f)
-		FILENAME="$OPTARG"
-		;;
 	m)
-		MODE="$OPTARG"
-		;;
-	d)
-		DIRECTORY="${OPTARG%/}"
+		case "${OPTARG,,}" in
+		region | window | output | layer | surface)
+			MODES+=("${OPTARG,,}")
+			;;
+		*)
+			fail 5 "Invalid mode \"$MODE\""
+			;;
+		esac
 		;;
 	c)
 		case "$OPTARG" in
@@ -170,12 +208,6 @@ while getopts ':f:m:d:conaz' arg; do
 			fail 3 "$OPTARG Is not a valid clipboard mode"
 			;;
 		esac
-		;;
-	o)
-		CLIPBOARD=${CLIPBOARD:-"o"}
-		;;
-	n)
-		CLIPBOARD=${CLIPBOARD:-"n"}
 		;;
 	a)
 		case "${OPTARG,,}" in
@@ -194,36 +226,23 @@ while getopts ':f:m:d:conaz' arg; do
 			;;
 		esac
 		;;
-	z)
-		FREEZE=true
-		;;
-	\?)
-		fail 1 "Invalid argument -$arg"
-		;;
-	:)
-		fail 2 "No argument provided for -$OPTARG"
-		;;
+	f) FILENAME="$OPTARG" ;;
+	o) CLIPBOARD=${CLIPBOARD:-"o"} ;;
+	n) CLIPBOARD=${CLIPBOARD:-"n"} ;;
+	d) DIRECTORY="${OPTARG%/}" ;;
+	z) FREEZE=true ;;
+	\?) fail 1 "Invalid argument -$arg" ;;
+	:) fail 2 "No argument provided for -$OPTARG" ;;
 	esac
 done
 
 grab_init
-case "${MODE,,}" in
-area)
-	grab_area
-	;;
-window)
-	grab_window
-	;;
-output)
-	grab_output
-	;;
-layer)
-	grab_layer
-	;;
-surface)
-	grab_surface
-	;;
-*)
-	fail 5 "Invalid mode \"$MODE\""
-	;;
-esac
+
+# pipe="$(mktemp -u)"
+# mkfifo "$pipe"
+# get_rectangles > "$pipe"
+# grab_area < "$pipe"
+
+	get_rectangles
+	echo -n "$RECTANGLES"
+capture
