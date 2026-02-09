@@ -78,8 +78,9 @@ notify() {
 }
 
 cleanup() {
+	sleep 0.1
 	rm -f "$TEMPFILE" "$TEMPFILE.png"
-	kill "$FREEZE_PID" 1>/dev/null 2>&1 || true
+	kill "$FREEZE_PID" 1>/dev/null 2>&1
 }
 trap cleanup 0
 
@@ -105,7 +106,7 @@ grab_init() {
 	if $FREEZE; then
 		if [[ $(command -v wayfreeze) ]]; then
 			wayfreeze &
-			sleep 0.1
+			sleep 0.2
 			FREEZE_PID=$!
 		elif [[ $(command -v hyprpicker) ]]; then
 			hyprpicker -r -z >/dev/null &
@@ -158,7 +159,6 @@ capture() {
 	if $REGION; then args=; else args=-r; fi
 	geometry="$(printf %s "$RECTANGLES" | slurp "$args")"
 	[[ $? -ne 0 ]] && exit 0
-	kill "$FREEZE_PID" 1>/dev/null 2>&1 || true
 
 	grim -g "$geometry" "$TEMPFILE"
 
@@ -238,11 +238,6 @@ done
 
 grab_init
 
-# pipe="$(mktemp -u)"
-# mkfifo "$pipe"
-# get_rectangles > "$pipe"
-# grab_area < "$pipe"
-
-	get_rectangles
-	echo -n "$RECTANGLES"
+get_rectangles
+echo -n "$RECTANGLES"
 capture
