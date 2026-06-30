@@ -14,6 +14,7 @@ FREEZE=false
 FREEZE_PID=
 REGION=false
 RECTANGLES=
+PREDEFINED=
 
 usage() {
 	printf %s "Usage: $0 [opts]
@@ -26,7 +27,7 @@ usage() {
 	-c <mode>            Specify clipboard mode (yes, no, only)
 	-a <satty/swappy>    Open screenshot in annotation app, satty is used if neither is specified
 	-z                   Freeze display during screenshot
-
+	-p                   Screenshot a predefined area immediately. Disabled freeze
 "
 }
 
@@ -157,8 +158,12 @@ get_outputs() {
 capture() {
 	local args geometry
 	if $REGION; then args=; else args=-r; fi
-	geometry="$(printf %s "$RECTANGLES" | slurp "$args")"
-	[[ $? -ne 0 ]] && exit 0
+	if [[ -n $PREDEFINED ]]; then
+		geometry="$PREDEFINED"
+	else
+		geometry="$(printf %s "$RECTANGLES" | slurp "$args")"
+		[[ $? -ne 0 ]] && exit 1
+	fi
 
 	grim -g "$geometry" "$TEMPFILE"
 
@@ -187,7 +192,7 @@ capture() {
 	disown
 }
 
-while getopts ':f:m:d:c:ona:z' arg; do
+while getopts ':f:m:d:c:ona:zp:' arg; do
 	case "$arg" in
 	m)
 		case "${OPTARG,,}" in
@@ -231,6 +236,10 @@ while getopts ':f:m:d:c:ona:z' arg; do
 	n) CLIPBOARD=${CLIPBOARD:-"n"} ;;
 	d) DIRECTORY="${OPTARG%/}" ;;
 	z) FREEZE=true ;;
+	p)
+		FREEZE=false
+		PREDEFINED="$OPTARG"
+		;;
 	\?) fail 1 "Invalid argument -$arg" ;;
 	:) fail 2 "No argument provided for -$OPTARG" ;;
 	esac
